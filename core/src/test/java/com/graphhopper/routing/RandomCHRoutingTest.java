@@ -61,15 +61,12 @@ public class RandomCHRoutingTest {
         int numNodes = 50;
         long seed = System.nanoTime();
         // for example these used to fail before fixing #1574.
-//        seed = 9348906923700L;
-//        seed = 9376976930825L;
-//        seed = 9436934744695L;
-//        seed = 10093639220394L;
+        seed = 10785899964423L;
 
         System.out.println("seed: " + seed);
         Random rnd = new Random(seed);
-        // todo: allowing loops also produces another error (may not read speed in wrong direction...), e.g. with this seed: 10785899964423
-        boolean allowLoops = false;
+        // todonow: allowing loops here  produces error (may not read speed in wrong direction...), fix this!
+        boolean allowLoops = true;
         buildRandomGraph(rnd, numNodes, 2.5, allowLoops, true, 0.9);
         locationIndex = new LocationIndexTree(graph, dir);
         locationIndex.prepareIndex();
