@@ -15,6 +15,7 @@ import com.graphhopper.storage.index.QueryResult;
 import com.graphhopper.util.Helper;
 import com.graphhopper.util.StopWatch;
 import com.graphhopper.util.shapes.GHPoint;
+import java.math.BigDecimal;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.slf4j.Logger;
@@ -28,6 +29,7 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
 import java.util.*;
+import org.locationtech.jts.geom.Geometry;
 
 @Path("isochrone")
 public class IsochroneResource {
@@ -60,8 +62,8 @@ public class IsochroneResource {
             @QueryParam("time_limit") @DefaultValue("600") long timeLimitInSeconds,
             @QueryParam("distance_limit") @DefaultValue("-1") double distanceInMeter) {
 
-        if (nBuckets > 20 || nBuckets < 1)
-            throw new IllegalArgumentException("Number of buckets has to be in the range [1, 20]");
+        if (nBuckets < 1)
+            throw new IllegalArgumentException("Number of buckets has to be positive");
 
         if (point == null)
             throw new IllegalArgumentException("point parameter cannot be null");
@@ -95,35 +97,29 @@ public class IsochroneResource {
         }
 
         if ("polygon".equalsIgnoreCase(resultStr)) {
-            List<List<Coordinate>> buckets = isochrone.searchGPS(qr.getClosestNode(), nBuckets);
+            List<Isochrone.IsoLabelWithCoordinates> resultList = isochrone.search(qr.getClosestNode());
             if (isochrone.getVisitedNodes() > graphHopper.getMaxVisitedNodes() / 5) {
                 throw new IllegalArgumentException("Server side reset: too many junction nodes would have to explored (" + isochrone.getVisitedNodes() + "). Let us know if you need this increased.");
             }
-
-            int counter = 0;
-            for (List<Coordinate> bucket : buckets) {
-                if (bucket.size() < 2) {
-                    throw new IllegalArgumentException("Too few points found for bucket " + counter + ". "
-                            + "Please try a different 'point', a smaller 'buckets' count or a larger 'time_limit'. "
-                            + "And let us know if you think this is a bug!");
-                }
-                counter++;
-            }
             ArrayList<JsonFeature> features = new ArrayList<>();
-            List<Coordinate[]> polygonShells = delaunayTriangulationIsolineBuilder.calcList(buckets, buckets.size() - 1);
-            for (Coordinate[] polygonShell : polygonShells) {
+            Map<Integer, Geometry> polygonShells = delaunayTriangulationIsolineBuilder.calcGeometries(resultList);
+            for (Map.Entry<Integer, Geometry> polygonShell : polygonShells.entrySet()) {
                 JsonFeature feature = new JsonFeature();
                 HashMap<String, Object> properties = new HashMap<>();
-                properties.put("bucket", features.size());
+                properties.put("time", polygonShell.getKey());
                 feature.setProperties(properties);
-                feature.setGeometry(geometryFactory.createPolygon(polygonShell));
+                feature.setGeometry(polygonShell.getValue());
                 features.add(feature);
             }
             ObjectNode json = JsonNodeFactory.instance.objectNode();
-            json.putPOJO("polygons", features);
+//            ObjectNode crs = json.putObject("crs");
+//            crs.put("type", "name");
+//            crs.putObject("properties").put("name", "EPSG:3857");
+            json.put("type", "FeatureCollection");
+            json.putPOJO("features", features);
             sw.stop();
             logger.info("took: " + sw.getSeconds() + ", visited nodes:" + isochrone.getVisitedNodes() + ", " + uriInfo.getQueryParameters());
-            return Response.fromResponse(jsonSuccessResponse(json, sw.getSeconds()))
+            return Response.ok(json)
                     .header("X-GH-Took", "" + sw.getSeconds() * 1000)
                     .build();
         } else if ("pointlist".equalsIgnoreCase(resultStr)) {
@@ -131,6 +127,10 @@ public class IsochroneResource {
             if (!Helper.isEmpty(extendedHeader))
                 header.addAll(Arrays.asList(extendedHeader.split(",")));
             List<Isochrone.IsoLabelWithCoordinates> resultList = isochrone.search(qr.getClosestNode());
+            Map<Integer, Isochrone.IsoLabelWithCoordinates> index = new HashMap<>(resultList.size());
+            for (Isochrone.IsoLabelWithCoordinates label : resultList) {
+                index.put(label.adjNodeId, label);
+            }
             List<List> items = new ArrayList(resultList.size());
             for (Isochrone.IsoLabelWithCoordinates label : resultList) {
                 List list = new ArrayList(header.size());
@@ -162,6 +162,12 @@ public class IsochroneResource {
                             break;
                         case "prev_node_id":
                             list.add(label.baseNodeId);
+                            break;
+                        case "prev_distance":
+                            list.add(Optional.ofNullable(index.get(label.baseNodeId)).map(i -> i.distance).orElse(0D));
+                            break;
+                        case "prev_time":
+                            list.add(Optional.ofNullable(index.get(label.baseNodeId)).map(i -> i.time).orElse(0L));
                             break;
                         default:
                             throw new IllegalArgumentException("Unknown property " + h);

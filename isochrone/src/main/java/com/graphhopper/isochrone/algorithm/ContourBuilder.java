@@ -13,12 +13,13 @@
 
 package com.graphhopper.isochrone.algorithm;
 
-import org.locationtech.jts.algorithm.CGAlgorithms;
 import org.locationtech.jts.geom.*;
 import org.locationtech.jts.triangulate.quadedge.QuadEdge;
 import org.locationtech.jts.triangulate.quadedge.QuadEdgeSubdivision;
 
 import java.util.*;
+import org.locationtech.jts.algorithm.Area;
+import org.locationtech.jts.triangulate.quadedge.Vertex;
 
 /**
  *
@@ -64,14 +65,34 @@ public class ContourBuilder {
                 } else if (triangulation.isFrameVertex(e.dest())) {
                     cC = moveEpsilonTowards(e.orig().getCoordinate(), e.dest().getCoordinate());
                 } else {
-                    cC = e.orig().midPoint(e.dest()).getCoordinate();
+                    Vertex p1 = e.orig();
+                    Vertex p2 = e.dest();
+                    double dz = p2.getZ() - p1.getZ();
+                    if (Double.compare(dz, 0) == 0) {
+                        cC = cC = e.orig().midPoint(e.dest()).getCoordinate();
+                    } else {
+                        double dx = p2.getX() - p1.getX();
+                        double dy = p2.getY() - p1.getY();
+                        double dz0 = z0 - p1.getZ();
+                        double x = dz0 * dx / dz + p1.getX();
+                        double y = dz0 * dy / dz + p1.getY();
+                        cC = new Coordinate(x, y, z0);
+                    }
+                    if (p1.getCoordinate().distance(cC) <= EPSILON) {
+//                        cC = p1.getCoordinate();
+                        cC = moveEpsilonTowards(cC, p2.getCoordinate());
+                    } else if (p2.getCoordinate().distance(cC) <= EPSILON) {
+//                        cC = p2.getCoordinate();
+                        cC = moveEpsilonTowards(cC, p1.getCoordinate());
+                    }
+//                    cC = e.orig().midPoint(e.dest()).getCoordinate();
                 }
                 polyPoints.add(cC);
                 processed.add(e);
                 QuadEdge E1 = ccw ? e.oNext().getPrimary() : e.oPrev().getPrimary();
                 QuadEdge E2 = ccw ? e.dPrev().getPrimary() : e.dNext().getPrimary();
-                int cut1 = E1 == null ? 0 : cut(E1.orig().getZ(), E1.dest().getZ(), z0);
-                int cut2 = E2 == null ? 0 : cut(E2.orig().getZ(), E2.dest().getZ(), z0);
+                int cut1 = cut(E1.orig().getZ(), E1.dest().getZ(), z0);
+                int cut2 = cut(E2.orig().getZ(), E2.dest().getZ(), z0);
                 boolean ok1 = cut1 != 0 && !processed.contains(E1);
                 boolean ok2 = cut2 != 0 && !processed.contains(E2);
                 if (ok1) {
@@ -99,11 +120,15 @@ public class ContourBuilder {
 
     @SuppressWarnings("unchecked") // JTS is not generified
     private Collection<QuadEdge> getPrimaryEdges() {
-        return (Collection<QuadEdge>) triangulation.getPrimaryEdges(true);
+        return (Collection<QuadEdge>) triangulation.getPrimaryEdges(false);
     }
 
     private Coordinate moveEpsilonTowards(Coordinate coordinate, Coordinate distantFrameCoordinate) {
-        return new Coordinate(coordinate.x + EPSILON * (distantFrameCoordinate.x - coordinate.x), coordinate.y + EPSILON * (distantFrameCoordinate.y - coordinate.y));
+        return new Coordinate(
+                coordinate.x + EPSILON * (distantFrameCoordinate.x - coordinate.x),
+                coordinate.y + EPSILON * (distantFrameCoordinate.y - coordinate.y),
+                coordinate.z + EPSILON * (distantFrameCoordinate.z - coordinate.z)
+        );
     }
 
     private int cut(double za, double zb, double z0) {
@@ -118,7 +143,7 @@ public class ContourBuilder {
         List<LinearRing> holes = new ArrayList<>(rings.size() / 2);
         // 1. Split the polygon list in two: shells and holes (CCW and CW)
         for (LinearRing ring : rings) {
-            if (CGAlgorithms.signedArea(ring.getCoordinateSequence()) > 0.0)
+            if (Area.ofRingSigned(ring.getCoordinateSequence()) > 0.0)
                 holes.add(ring);
             else
                 shells.add(geometryFactory.createPolygon(ring));
@@ -143,7 +168,7 @@ public class ContourBuilder {
                         break outer;
                     }
                 }
-                throw new RuntimeException("Found a hole without a shell.");
+                System.out.println("Found a hole without a shell. " + geometryFactory.createPolygon(hole).toText());
             }
         }
         // 4. Build the list of punched polygons

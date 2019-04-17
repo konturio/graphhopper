@@ -60,9 +60,7 @@ public class Isochrone extends AbstractRoutingAlgorithm {
             return super.toString() + ", time:" + time + ", distance:" + distance;
         }
     }
-
-    private IntObjectHashMap<IsoLabel> fromMap;
-    private PriorityQueue<IsoLabel> fromHeap;
+    
     private IsoLabel currEdge;
     private int visitedNodes;
     private double limit = -1;
@@ -72,8 +70,6 @@ public class Isochrone extends AbstractRoutingAlgorithm {
 
     public Isochrone(Graph g, Weighting weighting, boolean reverseFlow) {
         super(g, weighting, TraversalMode.NODE_BASED);
-        fromHeap = new PriorityQueue<>(1000);
-        fromMap = new GHIntObjectHashMap<>(1000);
         this.reverseFlow = reverseFlow;
     }
 
@@ -118,7 +114,7 @@ public class Isochrone extends AbstractRoutingAlgorithm {
     }
 
     public List<IsoLabelWithCoordinates> search(int from) {
-        searchInternal(from);
+        IntObjectHashMap<IsoLabel> fromMap = searchInternal(from);
 
         final List<IsoLabelWithCoordinates> shortestPathEntries = new ArrayList<>(fromMap.size());
         final NodeAccess na = graph.getNodeAccess();
@@ -147,17 +143,14 @@ public class Isochrone extends AbstractRoutingAlgorithm {
     }
 
     public List<List<Coordinate>> searchGPS(int from, final int bucketCount) {
-        searchInternal(from);
-
+        IntObjectHashMap<IsoLabel> fromMap = searchInternal(from);
         final double bucketSize = limit / bucketCount;
         final List<List<Coordinate>> buckets = new ArrayList<>(bucketCount);
-
         for (int i = 0; i < bucketCount + 1; i++) {
             buckets.add(new ArrayList<Coordinate>());
         }
         final NodeAccess na = graph.getNodeAccess();
         fromMap.forEach(new IntObjectProcedure<IsoLabel>() {
-
             @Override
             public void apply(int nodeId, IsoLabel label) {
                 int bucketIndex = (int) (getExploreValue(label) / bucketSize);
@@ -184,7 +177,7 @@ public class Isochrone extends AbstractRoutingAlgorithm {
     }
 
     public List<Set<Integer>> search(int from, final int bucketCount) {
-        searchInternal(from);
+        IntObjectHashMap<IsoLabel> fromMap = searchInternal(from);
 
         final double bucketSize = limit / bucketCount;
         final List<Set<Integer>> list = new ArrayList<>(bucketCount);
@@ -216,32 +209,28 @@ public class Isochrone extends AbstractRoutingAlgorithm {
         return list;
     }
 
-    private void searchInternal(int from) {
+    private IntObjectHashMap<IsoLabel> searchInternal(int from) {
         checkAlreadyRun();
+        PriorityQueue<IsoLabel> fromHeap = new PriorityQueue<>(1000);
+        IntObjectHashMap<IsoLabel> fromMap = new GHIntObjectHashMap<>(1000);
         currEdge = new IsoLabel(-1, from, 0, 0, 0);
         fromMap.put(from, currEdge);
+        fromHeap.add(currEdge);
         EdgeExplorer explorer = reverseFlow ? inEdgeExplorer : outEdgeExplorer;
-        while (true) {
-            visitedNodes++;
-            if (finished()) {
-                break;
+        while (!fromHeap.isEmpty() && !finished()) {
+            currEdge = fromHeap.poll();
+            if (currEdge == null) {
+                throw new AssertionError("Empty edge cannot happen");
             }
-
+            visitedNodes++;
             int neighborNode = currEdge.adjNode;
             EdgeIterator iter = explorer.setBaseNode(neighborNode);
             while (iter.next()) {
-                if (!accept(iter, currEdge.edge)) {
+                if (iter.getEdge() == currEdge.edge || !accept(iter, currEdge.edge)) {
                     continue;
                 }
-                // minor speed up
-                if (currEdge.edge == iter.getEdge()) {
-                    continue;
-                }
-
                 double tmpWeight = weighting.calcWeight(iter, reverseFlow, currEdge.edge) + currEdge.weight;
-                if (Double.isInfinite(tmpWeight))
-                    continue;
-
+                if (Double.isInfinite(tmpWeight)) continue;
                 double tmpDistance = iter.getDistance() + currEdge.distance;
                 long tmpTime = weighting.calcMillis(iter, reverseFlow, currEdge.edge) + currEdge.time;
                 int tmpNode = iter.getAdjNode();
@@ -261,23 +250,12 @@ public class Isochrone extends AbstractRoutingAlgorithm {
                     fromHeap.add(nEdge);
                 }
             }
-
-            if (fromHeap.isEmpty()) {
-                break;
-            }
-
-            currEdge = fromHeap.poll();
-            if (currEdge == null) {
-                throw new AssertionError("Empty edge cannot happen");
-            }
         }
+        return fromMap;
     }
 
     private double getExploreValue(IsoLabel label) {
-        if (exploreType == TIME)
-            return label.time;
-        // if(exploreType == DISTANCE)
-        return label.distance;
+        return exploreType == TIME ? label.time : label.distance;
     }
 
     @Override
