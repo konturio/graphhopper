@@ -6,8 +6,10 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.graphhopper.GraphHopper;
 import com.graphhopper.isochrone.algorithm.DelaunayTriangulationIsolineBuilder;
+import com.graphhopper.isochrone.algorithm.GatherSupplies;
 import com.graphhopper.isochrone.algorithm.Isochrone;
 import com.graphhopper.isochrone.model.IsoLabel;
+import com.graphhopper.isochrone.model.Warehouse;
 import com.graphhopper.json.geo.JsonFeature;
 import com.graphhopper.routing.QueryGraph;
 import com.graphhopper.routing.util.*;
@@ -34,9 +36,9 @@ import javax.ws.rs.core.UriInfo;
 import java.util.*;
 import java.util.stream.Collectors;
 import javax.ws.rs.core.MultivaluedMap;
+import jersey.repackaged.com.google.common.collect.ImmutableMap;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
-import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.triangulate.ConformingDelaunayTriangulator;
 import org.locationtech.jts.triangulate.ConstraintVertex;
@@ -154,36 +156,18 @@ public class IsochroneResource {
         } catch (IOException e) {
             logger.warn("Cannot save Voronoy diagram", e);
         }
-        long maxTime = timeLimitInSeconds * 1000 + 1;
-        List<IsoLabel> resultList = nodeIndex.entrySet().parallelStream()
-            .map(entry -> {
-                Integer id = entry.getKey();
-                Coordinate coordinate = entry.getValue();
-                Point point = geometryFactory.createPoint(coordinate);
-                return voronoiCells.keySet().stream()
-                        .filter(c -> c.contains(point))
-                        .findFirst()
-                        .map(cell -> {
-                            Set<Polygon> neighbors = voronoiCells.keySet().stream()
-                                    .filter(p -> !p.equals(cell))
-                                    .filter(p -> p.touches(cell))
-                                    .collect(Collectors.toSet());
-                            Long minTime = neighbors.stream()
-                                    .map(neighbor -> voronoiCells.get(neighbor).get(id))
-                                    .filter(Objects::nonNull)
-                                    .reduce((a, b) -> b.time < a.time ? b : a)
-                                    .map(p -> p.time)
-                                    .orElse(maxTime);
-                            if (voronoiCells.get(cell).containsKey(id)) {
-                                voronoiCells.get(cell).get(id).time = minTime;
-                            }
-                            return voronoiCells.get(cell).get(id);
-                        })
-                        .orElse(null); // point is outside of cells
-            })
-            .filter(node -> node != null)
-            .filter(node -> node.time < maxTime)
-            .collect(Collectors.toList());
+        Set<Warehouse<String>> firestations = voronoiCells.entrySet().stream()
+                .map(e -> {
+                    Warehouse<String> w = new Warehouse<>();
+                    w.setLocation((Coordinate) e.getKey().getUserData());
+                    w.setNeighborhood(e.getKey());
+                    w.setReach(e.getValue());
+                    w.setAssets(ImmutableMap.of("firetruck", 2D));
+                    return w;
+                })
+                .collect(Collectors.toSet());
+        GatherSupplies<String> gathering = new GatherSupplies<>(ImmutableMap.of("firetruck", 4D));
+        List<IsoLabel> resultList = gathering.apply(firestations);
         logger.info("Preparing result for the graph of {} nodes", resultList.size());
         ObjectNode json = prepareResponse(resultList, resultStr, extendedHeader);
         sw.stop();
