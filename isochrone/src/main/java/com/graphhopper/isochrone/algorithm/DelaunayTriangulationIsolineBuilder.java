@@ -21,6 +21,7 @@ import com.bedatadriven.jackson.datatype.jts.JtsModule3D;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.graphhopper.isochrone.model.IsoLabel;
 import com.graphhopper.json.geo.JsonFeature;
 import java.io.File;
 import java.io.FileWriter;
@@ -162,12 +163,12 @@ public class DelaunayTriangulationIsolineBuilder {
     }
     
     @SuppressWarnings("unchecked")
-    public Map<Integer, Geometry> calcGeometries(List<Isochrone.IsoLabel> pointList) {
+    public Map<Integer, Geometry> calcGeometries(List<IsoLabel> pointList) {
         GeometryFactory gf = new GeometryFactory();
         long maxTime = 0;
         Map<Integer, Coordinate> index = new HashMap<>(pointList.size());
         Map<Coordinate, Double> zIndex = new HashMap<>(pointList.size());
-        for (Isochrone.IsoLabel p : pointList) {
+        for (IsoLabel p : pointList) {
             try {
                 long time = p.time / 60000; // convert time to minutes
                 Coordinate c = JTS.transform(p.adjCoordinate, null, transform);
@@ -182,7 +183,7 @@ public class DelaunayTriangulationIsolineBuilder {
             }
         }
         List<LineString> lines = new ArrayList<>(pointList.size());
-        for (Isochrone.IsoLabel p : pointList) {
+        for (IsoLabel p : pointList) {
             if (p.parent != null && index.containsKey(p.parent.adjNode)) {
                 lines.add(gf.createLineString(new Coordinate[] {index.get(p.adjNode), index.get(p.parent.adjNode)}));
             }

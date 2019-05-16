@@ -23,7 +23,6 @@ import com.graphhopper.coll.GHIntObjectHashMap;
 import com.graphhopper.routing.weighting.Weighting;
 import com.graphhopper.storage.Graph;
 import com.graphhopper.storage.NodeAccess;
-import com.graphhopper.storage.SPTEntry;
 import com.graphhopper.util.EdgeExplorer;
 import com.graphhopper.util.EdgeIterator;
 import org.locationtech.jts.geom.Coordinate;
@@ -32,6 +31,7 @@ import java.util.*;
 
 import static com.graphhopper.isochrone.algorithm.Isochrone.ExploreType.DISTANCE;
 import static com.graphhopper.isochrone.algorithm.Isochrone.ExploreType.TIME;
+import com.graphhopper.isochrone.model.IsoLabel;
 import com.graphhopper.routing.util.DefaultEdgeFilter;
 
 /**
@@ -40,25 +40,6 @@ import com.graphhopper.routing.util.DefaultEdgeFilter;
 public class Isochrone {
 
     enum ExploreType {TIME, DISTANCE}
-
-    // TODO use same class as used in GTFS module?
-    public class IsoLabel extends SPTEntry {
-
-        IsoLabel(int edgeId, int adjNode, double weight, long time, double distance) {
-            super(edgeId, adjNode, weight);
-            this.time = time;
-            this.distance = distance;
-        }
-
-        public Coordinate adjCoordinate;
-        public long time;
-        public double distance;
-
-        @Override
-        public String toString() {
-            return super.toString() + ", time:" + time + ", distance:" + distance;
-        }
-    }
 
     private final Graph graph;
     private final Weighting weighting;
@@ -155,34 +136,34 @@ public class Isochrone {
         IsoLabel currEdge = new IsoLabel(-1, from, 0, 0, 0);
         fromMap.put(from, currEdge);
         fromHeap.add(currEdge);
-        while (!fromHeap.isEmpty() && !finished(currEdge)) {
+        while (!fromHeap.isEmpty()) {
             currEdge = fromHeap.poll();
-            if (currEdge == null) {
-                throw new AssertionError("Empty edge cannot happen");
+            if (finished(currEdge)) {
+                continue;
             }
-            int neighborNode = currEdge.adjNode;
-            EdgeIterator iter = explorer.setBaseNode(neighborNode);
-            while (iter.next()) {
-                if (iter.getEdge() == currEdge.edge) {
+            int currNode = currEdge.adjNode;
+            EdgeIterator neighbor = explorer.setBaseNode(currNode);
+            while (neighbor.next()) {
+                if (neighbor.getEdge() == currEdge.edge) {
                     continue;
                 }
-                double tmpWeight = weighting.calcWeight(iter, reverseFlow, currEdge.edge) + currEdge.weight;
-                if (Double.isInfinite(tmpWeight)) continue;
-                double tmpDistance = iter.getDistance() + currEdge.distance;
-                long tmpTime = weighting.calcMillis(iter, reverseFlow, currEdge.edge) + currEdge.time;
-                int tmpNode = iter.getAdjNode();
-                IsoLabel nEdge = fromMap.get(tmpNode);
+                double weight = weighting.calcWeight(neighbor, reverseFlow, currEdge.edge) + currEdge.weight;
+                if (Double.isInfinite(weight)) continue;
+                double distance = neighbor.getDistance() + currEdge.distance;
+                long time = weighting.calcMillis(neighbor, reverseFlow, currEdge.edge) + currEdge.time;
+                int neighborNodeId = neighbor.getAdjNode();
+                IsoLabel nEdge = fromMap.get(neighborNodeId);
                 if (nEdge == null) {
-                    nEdge = new IsoLabel(iter.getEdge(), tmpNode, tmpWeight, tmpTime, tmpDistance);
+                    nEdge = new IsoLabel(neighbor.getEdge(), neighborNodeId, weight, time, distance);
                     nEdge.parent = currEdge;
-                    fromMap.put(tmpNode, nEdge);
+                    fromMap.put(neighborNodeId, nEdge);
                     fromHeap.add(nEdge);
-                } else if (nEdge.weight > tmpWeight) {
+                } else if (nEdge.weight > weight) {
                     fromHeap.remove(nEdge);
-                    nEdge.edge = iter.getEdge();
-                    nEdge.weight = tmpWeight;
-                    nEdge.distance = tmpDistance;
-                    nEdge.time = tmpTime;
+                    nEdge.edge = neighbor.getEdge();
+                    nEdge.weight = weight;
+                    nEdge.distance = distance;
+                    nEdge.time = time;
                     nEdge.parent = currEdge;
                     fromHeap.add(nEdge);
                 }
