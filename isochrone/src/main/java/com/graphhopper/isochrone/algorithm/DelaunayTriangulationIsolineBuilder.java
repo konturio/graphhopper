@@ -162,17 +162,17 @@ public class DelaunayTriangulationIsolineBuilder {
     }
     
     @SuppressWarnings("unchecked")
-    public Map<Integer, Geometry> calcGeometries(List<Isochrone.IsoLabelWithCoordinates> pointList) {
+    public Map<Integer, Geometry> calcGeometries(List<Isochrone.IsoLabel> pointList) {
         GeometryFactory gf = new GeometryFactory();
         long maxTime = 0;
         Map<Integer, Coordinate> index = new HashMap<>(pointList.size());
         Map<Coordinate, Double> zIndex = new HashMap<>(pointList.size());
-        for (Isochrone.IsoLabelWithCoordinates p : pointList) {
+        for (Isochrone.IsoLabel p : pointList) {
             try {
                 long time = p.time / 60000; // convert time to minutes
                 Coordinate c = JTS.transform(p.adjCoordinate, null, transform);
                 c.z = time;
-                index.put(p.adjNodeId, c);
+                index.put(p.adjNode, c);
                 zIndex.put(c, (double) time);
                 if (maxTime < time) {
                     maxTime = time;
@@ -182,9 +182,9 @@ public class DelaunayTriangulationIsolineBuilder {
             }
         }
         List<LineString> lines = new ArrayList<>(pointList.size());
-        for (Isochrone.IsoLabelWithCoordinates p : pointList) {
-            if (p.baseNodeId != 0 && index.containsKey(p.baseNodeId)) {
-                lines.add(gf.createLineString(new Coordinate[] {index.get(p.adjNodeId), index.get(p.baseNodeId)}));
+        for (Isochrone.IsoLabel p : pointList) {
+            if (p.parent != null && index.containsKey(p.parent.adjNode)) {
+                lines.add(gf.createLineString(new Coordinate[] {index.get(p.adjNode), index.get(p.parent.adjNode)}));
             }
         }
         try {

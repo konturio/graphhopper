@@ -77,7 +77,7 @@ public class IsochroneResource {
         if (point == null)
             throw new IllegalArgumentException("point parameter cannot be null");
         StopWatch sw = new StopWatch().start();
-        List<Isochrone.IsoLabelWithCoordinates> resultList = getIsolabels(vehicle, reverseFlow, point, timeLimitInSeconds, distanceInMeter, uriInfo.getQueryParameters());
+        List<Isochrone.IsoLabel> resultList = getIsolabels(vehicle, reverseFlow, point, timeLimitInSeconds, distanceInMeter, uriInfo.getQueryParameters());
         ObjectNode json = prepareResponse(resultList, resultStr, extendedHeader);
         sw.stop();
         logger.info("Request took {} seconds", sw.getSeconds());
@@ -120,7 +120,7 @@ public class IsochroneResource {
         HintsMap hintsMap = new HintsMap();
         RouteResource.initHints(hintsMap, uriInfo.getQueryParameters());
         Weighting weighting = graphHopper.createWeighting(hintsMap, encoder, graph);
-        Map<Coordinate, Map<Integer, Isochrone.IsoLabelWithCoordinates>> isochrones = queryResults.parallelStream()
+        Map<Coordinate, Map<Integer, Isochrone.IsoLabel>> isochrones = queryResults.parallelStream()
             .collect(Collectors.toMap(
                 qr -> new Coordinate(qr.getQueryPoint().lon, qr.getQueryPoint().lat),
                 qr -> {
@@ -131,7 +131,7 @@ public class IsochroneResource {
                         isochrone.setTimeLimit(timeLimitInSeconds);
                     }
                     return isochrone.search(qr.getClosestNode()).stream()
-                            .collect(Collectors.toMap(l -> l.adjNodeId, l -> l));
+                            .collect(Collectors.toMap(l -> l.adjNode, l -> l));
                 },
                 (a, b) -> a));
         Map<Integer, Coordinate> pointIndex = isochrones.values().stream()
@@ -145,7 +145,7 @@ public class IsochroneResource {
         triangulator.setConstraints(Collections.EMPTY_LIST, new ArrayList(sites));
         triangulator.formInitialDelaunay();
         QuadEdgeSubdivision tin = triangulator.getSubdivision();
-        Map<Polygon, Map<Integer, Isochrone.IsoLabelWithCoordinates>> voronoiCells = ((List<Polygon>) tin.getVoronoiCellPolygons(geometryFactory))
+        Map<Polygon, Map<Integer, Isochrone.IsoLabel>> voronoiCells = ((List<Polygon>) tin.getVoronoiCellPolygons(geometryFactory))
                 .stream()
                 .collect(Collectors.toMap(p -> p, p -> isochrones.get((Coordinate) p.getUserData())));
         try {
@@ -154,7 +154,7 @@ public class IsochroneResource {
             logger.warn("Cannot save Voronoy diagram", e);
         }
         long maxTime = timeLimitInSeconds * 1000 + 1;
-        List<Isochrone.IsoLabelWithCoordinates> resultList = pointIndex.entrySet().parallelStream()
+        List<Isochrone.IsoLabel> resultList = pointIndex.entrySet().parallelStream()
             .map(entry -> {
                 int id = entry.getKey();
                 Coordinate coordinate = entry.getValue();
@@ -192,7 +192,7 @@ public class IsochroneResource {
                 .build();
     }
 
-    private List<Isochrone.IsoLabelWithCoordinates> getIsolabels(
+    private List<Isochrone.IsoLabel> getIsolabels(
             String vehicle,
             boolean reverseFlow,
             GHPoint point,
@@ -221,14 +221,14 @@ public class IsochroneResource {
             isochrone.setTimeLimit(timeLimitInSeconds);
         }
         StopWatch sw = new StopWatch().start();
-        List<Isochrone.IsoLabelWithCoordinates> resultList = isochrone.search(qr.getClosestNode());
+        List<Isochrone.IsoLabel> resultList = isochrone.search(qr.getClosestNode());
         sw.stop();
-        logger.info("Spanning tree search took {} for ({}). {} nodes visited.", sw.getSeconds(), point, isochrone.getVisitedNodes());
+        logger.info("Spanning tree search took {} for ({}).", sw.getSeconds(), point);
         return resultList;
     }
     
     private ObjectNode prepareResponse(
-            List<Isochrone.IsoLabelWithCoordinates> resultList,
+            List<Isochrone.IsoLabel> resultList,
             String resultType,
             String extendedHeader
     ) {
@@ -253,12 +253,12 @@ public class IsochroneResource {
             Collection<String> header = new LinkedHashSet<>(Arrays.asList("longitude", "latitude", "time", "distance"));
             if (!Helper.isEmpty(extendedHeader))
                 header.addAll(Arrays.asList(extendedHeader.split(",")));
-            Map<Integer, Isochrone.IsoLabelWithCoordinates> index = new HashMap<>(resultList.size());
-            for (Isochrone.IsoLabelWithCoordinates label : resultList) {
-                index.put(label.adjNodeId, label);
+            Map<Integer, Isochrone.IsoLabel> index = new HashMap<>(resultList.size());
+            for (Isochrone.IsoLabel label : resultList) {
+                index.put(label.adjNode, label);
             }
             List<List> items = new ArrayList(resultList.size());
-            for (Isochrone.IsoLabelWithCoordinates label : resultList) {
+            for (Isochrone.IsoLabel label : resultList) {
                 List list = new ArrayList(header.size());
                 for (String h : header) {
                     switch (h) {
@@ -269,10 +269,10 @@ public class IsochroneResource {
                             list.add(label.time);
                             break;
                         case "node_id":
-                            list.add(label.adjNodeId);
+                            list.add(label.adjNode);
                             break;
                         case "edge_id":
-                            list.add(label.edgeId);
+                            list.add(label.edge);
                             break;
                         case "longitude":
                             list.add(label.adjCoordinate.x);
@@ -281,19 +281,19 @@ public class IsochroneResource {
                             list.add(label.adjCoordinate.y);
                             break;
                         case "prev_longitude":
-                            list.add(label.baseCoordinate == null ? null : label.baseCoordinate.x);
+                            list.add(Optional.ofNullable((Isochrone.IsoLabel) label.parent).map(l -> l.adjCoordinate.x));
                             break;
                         case "prev_latitude":
-                            list.add(label.baseCoordinate == null ? null : label.baseCoordinate.y);
+                            list.add(Optional.ofNullable((Isochrone.IsoLabel) label.parent).map(l -> l.adjCoordinate.y));
                             break;
                         case "prev_node_id":
-                            list.add(label.baseNodeId);
+                            list.add(Optional.ofNullable(label.parent).map(l -> l.adjNode).orElse(0));
                             break;
                         case "prev_distance":
-                            list.add(Optional.ofNullable(index.get(label.baseNodeId)).map(i -> i.distance).orElse(0D));
+                            list.add(Optional.ofNullable((Isochrone.IsoLabel) label.parent).map(l -> l.distance).orElse(0D));
                             break;
                         case "prev_time":
-                            list.add(Optional.ofNullable(index.get(label.baseNodeId)).map(i -> i.time).orElse(0L));
+                            list.add(Optional.ofNullable((Isochrone.IsoLabel) label.parent).map(l -> l.time).orElse(0L));
                             break;
                         default:
                             throw new IllegalArgumentException("Unknown property " + h);
@@ -313,7 +313,6 @@ public class IsochroneResource {
             output.delete();
         }
         output.createNewFile();
-        GeometryFactory gf = new GeometryFactory();
         ArrayList<JsonFeature> features = new ArrayList<>();
         for (Geometry l : lines) {
             JsonFeature feature = new JsonFeature();
