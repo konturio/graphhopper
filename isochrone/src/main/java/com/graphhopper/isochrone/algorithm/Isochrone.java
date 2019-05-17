@@ -44,7 +44,6 @@ public class Isochrone {
     private final Graph graph;
     private final Weighting weighting;
     private final boolean reverseFlow;
-    private final EdgeExplorer explorer;
     private double limit = -1;
     private double finishLimit = -1;
     private ExploreType exploreType = TIME;
@@ -53,11 +52,6 @@ public class Isochrone {
         this.graph = g;
         this.weighting = weighting;
         this.reverseFlow = reverseFlow;
-        if (reverseFlow) {
-            explorer = graph.createEdgeExplorer(DefaultEdgeFilter.inEdges(weighting.getFlagEncoder()));
-        } else {
-            explorer = graph.createEdgeExplorer(DefaultEdgeFilter.outEdges(weighting.getFlagEncoder()));
-        }
     }
 
     /**
@@ -136,6 +130,12 @@ public class Isochrone {
         IsoLabel currEdge = new IsoLabel(-1, from, 0, 0, 0);
         fromMap.put(from, currEdge);
         fromHeap.add(currEdge);
+        EdgeExplorer explorer;
+        if (reverseFlow) {
+            explorer = graph.createEdgeExplorer(DefaultEdgeFilter.inEdges(weighting.getFlagEncoder()));
+        } else {
+            explorer = graph.createEdgeExplorer(DefaultEdgeFilter.outEdges(weighting.getFlagEncoder()));
+        }
         while (!fromHeap.isEmpty()) {
             currEdge = fromHeap.poll();
             if (finished(currEdge)) {
@@ -156,6 +156,7 @@ public class Isochrone {
                 if (nEdge == null) {
                     nEdge = new IsoLabel(neighbor.getEdge(), neighborNodeId, weight, time, distance);
                     nEdge.parent = currEdge;
+                    nEdge.waypoints = neighbor.fetchWayGeometry(0);
                     fromMap.put(neighborNodeId, nEdge);
                     fromHeap.add(nEdge);
                 } else if (nEdge.weight > weight) {
@@ -165,6 +166,7 @@ public class Isochrone {
                     nEdge.distance = distance;
                     nEdge.time = time;
                     nEdge.parent = currEdge;
+                    nEdge.waypoints = neighbor.fetchWayGeometry(0);
                     fromHeap.add(nEdge);
                 }
             }

@@ -1,6 +1,7 @@
 package com.graphhopper.isochrone.model;
 
 import com.graphhopper.storage.SPTEntry;
+import com.graphhopper.util.PointList;
 import org.locationtech.jts.geom.Coordinate;
 
 /**
@@ -11,6 +12,7 @@ public class IsoLabel extends SPTEntry {
     public Coordinate adjCoordinate;
     public long time;
     public double distance;
+    public PointList waypoints;
     
     public IsoLabel(int edgeId, int adjNode, double weight, long time, double distance) {
         super(edgeId, adjNode, weight);
@@ -24,6 +26,7 @@ public class IsoLabel extends SPTEntry {
         this.distance = original.distance;
         this.adjCoordinate = original.adjCoordinate;
         this.parent = original.parent;
+        this.waypoints = original.waypoints;
     }
 
     @Override

@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.graphhopper.isochrone.model.IsoLabel;
 import com.graphhopper.json.geo.JsonFeature;
+import com.graphhopper.reader.dem.ElevationInterpolator;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -59,6 +60,7 @@ public class DelaunayTriangulationIsolineBuilder {
 
     private static final MathTransform transform;
     private static final MathTransform inverseTransform;
+    private static final ElevationInterpolator Z_INTERPOLATOR = new ElevationInterpolator();
     
     private static NonEncroachingSplitPointFinder splitPointFinder = new NonEncroachingSplitPointFinder() {
         @Override
@@ -66,38 +68,7 @@ public class DelaunayTriangulationIsolineBuilder {
             Coordinate r = super.findSplitPoint(seg, encroachPt);
             Coordinate p1 = seg.getStart();
             Coordinate p2 = seg.getEnd();
-            double dx = p2.x - p1.x;
-            double dy = p2.y - p1.y;
-            double dz = p2.z - p1.z;
-            if (Double.compare(dz, 0) == 0) {
-                r.z = p1.z;
-            } else if (Double.compare(dx, 0) == 0 && Double.compare(dy, 0) == 0) {
-                r.z = p1.z + dz / 2;
-            } else {
-                double fullLength = p1.distance(p2);
-                double part = p1.distance(r);
-                r.z = p1.z + dz * part / fullLength;
-//                    r.z = dz * (dy * dy * (r.x - p1.x) - dx * dx * (r.y - p1.y)) / (dx * dy * (dy - dx)) + p1.z;
-            }
-            if (Double.isNaN(p1.z)) {
-                System.out.println("Z is NaN for p1 " + p1.toString());
-            }
-            if (Double.isNaN(p2.z)) {
-                System.out.println("Z is NaN for p2 " + p2.toString());
-            }
-            if (Double.isNaN(r.z)) {
-                System.out.println("Z is NaN for result" + r.toString());
-                System.out.println("p1 " + p1.toString());
-                System.out.println("p2 " + p2.toString());
-            } else if (r.z < 0) {
-                System.out.println("Z is too low" + r.toString());
-                System.out.println("p1 " + p1.toString());
-                System.out.println("p2 " + p2.toString());
-            } else if ((r.z > p1.z && r.z > p2.z) || (r.z < p1.z && r.z < p2.z)) {
-                System.out.println("Z is not in range" + r.toString());
-                System.out.println("p1 " + p1.toString());
-                System.out.println("p2 " + p2.toString());
-            }
+            r.z = Z_INTERPOLATOR.calculateElevationBasedOnTwoPoints(r.y, r.x, p1.y, p1.x, p1.z, p2.y, p2.x, p2.z);
             return r;
         }
     };
@@ -170,7 +141,7 @@ public class DelaunayTriangulationIsolineBuilder {
         Map<Coordinate, Double> zIndex = new HashMap<>(pointList.size());
         for (IsoLabel p : pointList) {
             try {
-                long time = p.time / 60000; // convert time to minutes
+                long time = p.time / 1000; // convert time to seconds
                 Coordinate c = JTS.transform(p.adjCoordinate, null, transform);
                 c.z = time;
                 index.put(p.adjNode, c);
@@ -185,7 +156,17 @@ public class DelaunayTriangulationIsolineBuilder {
         List<LineString> lines = new ArrayList<>(pointList.size());
         for (IsoLabel p : pointList) {
             if (p.parent != null && index.containsKey(p.parent.adjNode)) {
-                lines.add(gf.createLineString(new Coordinate[] {index.get(p.adjNode), index.get(p.parent.adjNode)}));
+                Coordinate[] coordinates = new Coordinate[p.waypoints.size() + 2];
+                coordinates[0] = index.get(p.parent.adjNode);
+                try {
+                    for (int i = 0; i < p.waypoints.size(); i++) {
+                        coordinates[i + 1] = JTS.transform(new Coordinate(p.waypoints.getLon(i), p.waypoints.getLat(i)), null, transform);
+                    }
+                } catch (TransformException e) {
+                    throw new RuntimeException(e);
+                }
+                coordinates[p.waypoints.size() + 1] = index.get(p.adjNode);
+                lines.add(gf.createLineString(coordinates));
             }
         }
         try {
@@ -225,23 +206,26 @@ public class DelaunayTriangulationIsolineBuilder {
                         }
                         c.z = z;
                     } else {
-                        double z1 = Double.NaN;
-                        int k = j + 1;
-                        while (Double.isNaN(z1) && k < coords.length) {
-                            z1 = coords[k++].z;
+                        Coordinate c1 = null;
+                        for (int k = j + 1; k < coords.length; k ++) {
+                            if (!Double.isNaN(coords[k].z)) {
+                                c1 = coords[k]; 
+                                break;
+                            }
                         }
-                        double z2 = Double.NaN;
-                        k = j - 1;
-                        while (Double.isNaN(z2) && k > -1) {
-                            z2 = coords[k--].z;
+                        Coordinate c2 = null;
+                        for (int k = j - 1; k > -1; k--) {
+                            if (!Double.isNaN(coords[k].z)) {
+                                c2 = coords[k];
+                                break;
+                            }
                         }
-                        if (!(Double.isNaN(z1) || Double.isNaN(z2))) {
-//                            c.z = (z1 + z2) / 2;
-                            c.z = Math.max(z1, z2);
-                        } else if (!Double.isNaN(z1)) {
-                            c.z = z1;
-                        } else if (!Double.isNaN(z2)) {
-                            c.z = z2;
+                        if (c1 != null && c2 != null) {
+                            c.z = Z_INTERPOLATOR.calculateElevationBasedOnTwoPoints(c.y, c.x, c1.y, c1.x, c1.z, c2.y, c2.x, c2.z);
+                        } else if (c1 != null) {
+                            c.z = c1.z;
+                        } else if (c2 != null) {
+                            c.z = c2.z;
                         }
                     }
                 }
@@ -278,7 +262,7 @@ public class DelaunayTriangulationIsolineBuilder {
             }
             line.geometryChanged();
         }
-        ConformingDelaunayTriangulator triangulator = new ConformingDelaunayTriangulator(sites, 0.1);
+        ConformingDelaunayTriangulator triangulator = new ConformingDelaunayTriangulator(sites, 0.00001); //XXX tune tolerance value to avoid ConstraintEnforcementException 
         triangulator.setSplitPointFinder(splitPointFinder);
         triangulator.setConstraints(segments, new ArrayList(sites));
         triangulator.formInitialDelaunay();
@@ -303,14 +287,15 @@ public class DelaunayTriangulationIsolineBuilder {
             }
         }
         try {
-            saveAsObj(tin);
-            saveAsArray(tin);
+//            saveAsObj(tin);
+//            saveAsArray(tin);
+            saveAsGeojson(tin);
         } catch (IOException | RuntimeException e) {
-            System.out.println("Cannot save OBJ file");
+            System.out.println("Cannot save debugging file file");
         }
         ContourBuilder contourBuilder = new ContourBuilder(tin);
         // ignore the last isoline as it forms just the convex hull
-        int thikness = 1;
+        int thikness = 60; // one minute
         int maxIsolines = (int) (maxTime / thikness);
         if (maxIsolines == 0) {
             maxIsolines = 1;
@@ -420,17 +405,26 @@ public class DelaunayTriangulationIsolineBuilder {
         output.createNewFile();
         GeometryFactory gf = new GeometryFactory();
         ArrayList<JsonFeature> features = new ArrayList<>();
-        for (Vertex[] v : (List<Vertex[]>) tin.getTriangleVertices(false)) {
-            JsonFeature feature = new JsonFeature();
-            feature.setGeometry(gf.createPolygon(new Coordinate[] {v[0].getCoordinate(), v[1].getCoordinate(), v[2].getCoordinate(), v[0].getCoordinate()}));
-            features.add(feature);
+        try {
+            for (Vertex[] v : (List<Vertex[]>) tin.getTriangleVertices(false)) {
+                JsonFeature feature = new JsonFeature();
+                Coordinate[] coords = new Coordinate[4];
+                coords[0] = JTS.transform(v[0].getCoordinate(), null, inverseTransform);
+                coords[1] = JTS.transform(v[1].getCoordinate(), null, inverseTransform);
+                coords[2] = JTS.transform(v[2].getCoordinate(), null, inverseTransform);
+                coords[3] = coords[0];
+                feature.setGeometry(gf.createPolygon(coords));
+                features.add(feature);
+            }
+        }catch (TransformException e) {
+            throw new RuntimeException(e);
         }
         ObjectMapper om = new ObjectMapper();
         om.registerModule(new JtsModule3D());
         ObjectNode json = JsonNodeFactory.instance.objectNode();
-        ObjectNode crs = json.putObject("crs");
-        crs.put("type", "name");
-        crs.putObject("properties").put("name", "EPSG:3857");
+//        ObjectNode crs = json.putObject("crs");
+//        crs.put("type", "name");
+//        crs.putObject("properties").put("name", "EPSG:3857");
         json.put("type", "FeatureCollection");
         json.putPOJO("features", features);
         om.writeValue(output, json);
