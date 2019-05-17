@@ -134,6 +134,7 @@ public class IsochroneResource {
                         isochrone.setTimeLimit(timeLimitInSeconds);
                     }
                     return isochrone.search(qr.getClosestNode()).stream()
+                            .filter(l -> l.time <= timeLimitInSeconds * 1000 + 1)
                             .collect(Collectors.toMap(l -> l.adjNode, l -> l));
                 },
                 (a, b) -> a));
@@ -208,7 +209,7 @@ public class IsochroneResource {
         StopWatch sw = new StopWatch().start();
         List<IsoLabel> resultList = isochrone.search(qr.getClosestNode());
         sw.stop();
-        logger.info("Spanning tree search took {} for ({}).", sw.getSeconds(), point);
+        logger.info("Spanning tree for ({}) took {}.", point, sw.getSeconds());
         return resultList;
     }
     

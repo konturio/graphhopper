@@ -77,10 +77,10 @@ public class GatherSupplies<T> implements Function<Set<Warehouse<T>>, List<IsoLa
                             .orElse(null); // point is outside of neighborhoods
                 })
                 .filter(node -> node != null)
-                .filter(node -> node.time < maxTime)
                 .collect(Collectors.toMap(i -> i.adjNode, i -> i));
         nodes.values().stream()
                 .filter(i -> i.parent != null)
+                .filter(i -> nodes.containsKey(i.parent.adjNode))
                 .forEach(i -> i.parent = nodes.get(i.parent.adjNode));
         return new ArrayList<>(nodes.values());
     }
